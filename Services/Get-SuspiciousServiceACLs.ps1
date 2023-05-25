@@ -12,6 +12,27 @@
 # thanks @kaiserschloss for comments
 ##############
 
+$SDDLRights = @{
+    GA = "GENERIC_ALL"
+    GR = "GENERIC_READ"
+    GW = "GENERIC_WRITE"
+    GX = "GENERIC_EXECUTE"
+    RC = "READ_CONTROL"
+    SD = "DELETE"
+    WD = "WRITE_DAC"
+    WO = "WRITE_OWNER"
+    RP = "SERVICE_START"
+    WP = "SERVICE_STOP"
+    CC = "SERVICE_QUERY_CONFIG"
+    DC = "SERVICE_CHANGE_CONFIG"
+    LC = "SERVICE_QUERY_STATUS"
+    SW = "SERVICE_ENUMERATE_DEPENDENTS"
+    LO = "SERVICE_INTEROGATE"
+    DT = "SERVICE_PAUSE_CONTINUE"
+    CR = "SERVICE_UESR_DEFINED"
+}
+
+$ScanResults = @()
 $DebugPreference = "Continue"
 $services = (Get-WmiObject Win32_Service -EnableAllPrivileges)
 foreach ($srv in $services)
@@ -63,7 +84,40 @@ foreach ($srv in $services)
                 continue
             }
 
-            Write-Host $srv.Name - $ACE.Split(";")[2] - $PrincipalFromSDDL - $PrincipalName
+            $SuspiciousRights = @()
+            $AllRights = @()
+
+            $SvcSDDL = $($ACE.Split(";")[2])
+            Foreach ($SDDLRight in $SDDLRights.Keys) {
+                $StrToCheck = "*" + "$($SDDLRight)" + "*"
+                if ($SvcSDDL -clike $StrToCheck) {
+                    $AllRights += $($SDDLRights["$SDDLRight"])
+                }
+
+                if ($SvcSDDL -clike '*WD*') {
+                    $SuspiciousRights += "Modify the DACL in the object's security descriptor"
+                }
+                if ($SvcSDDL -clike '*WO*') {
+                    $SuspiciousRights += "Change the owner in the object's security descriptor"
+                }
+                if ($SvcSDDL -clike '*DC*') {
+                    $SuspiciousRights += "Change the service configuration"
+                }                
+            }
+
+            $SuspiciousService = New-Object -TypeName PSCustomObject -Property @{
+                'ServiceName'      = $($srv.Name)
+                'ACE'              = $($ACE.Split(";")[2])
+                'PrincipalSID'     = $PrincipalFromSDDL
+                'PrincipalName'    = $PrincipalName
+                'SuspiciousRights' = $SuspiciousRights
+                'AllRights'        = $AllRights
+            }
+            $ScanResults += $SuspiciousService
         } 
     }
 } 
+
+$ScanResults
+
+$ScanResults | Select ServiceName,PrincipalName,SuspiciousRights
